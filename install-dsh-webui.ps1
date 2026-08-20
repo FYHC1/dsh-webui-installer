@@ -86,21 +86,26 @@ REM Starts Windows-side DeepSeek Harness (dsh web)
 REM with NO console window (hidden), waits for
 REM readiness, opens Edge/Chrome app window with
 REM remembered size (landscape 1280x800 default).
+REM After the app window is closed, the watcher
+REM stops the dsh web THIS launcher started.
 REM ============================================
 set "DSH=$dshPath"
 set "PORT=3080"
 if defined DSH_WEB_PORT set "PORT=%DSH_WEB_PORT%"
 set "URL=http://127.0.0.1:%PORT%"
 set "DATA_DIR=%LOCALAPPDATA%\dsh-webui-browser"
+if defined DSH_WEBUI_DATA_DIR set "DATA_DIR=%DSH_WEBUI_DATA_DIR%"
 set "LOG=%USERPROFILE%\.dsh-webui\dsh-web.log"
 set "SIZE_FILE=%USERPROFILE%\.dsh-webui-browser\window-size"
+set "KILL_ON_CLOSE=0"
 
-REM [1/4] already serving? open browser directly
+REM [1/4] already serving? open browser directly (server NOT owned by this launcher)
 powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:%PORT%' -TimeoutSec 2).StatusCode | Out-Null; exit 0 } catch { exit 1 }"
 if "!ERRORLEVEL!"=="0" goto open
 
 REM [2/4] start Windows-side dsh web hidden (no console window), log to file
 echo [2/4] starting dsh web (Windows) on port %PORT% ...
+set "KILL_ON_CLOSE=1"
 start "dsh web" /b cmd /c ""%DSH%" web --port %PORT%" >"%LOG%" 2>&1
 
 REM [3/4] wait for WebUI ready (cold boot can take ~2 min)
@@ -129,12 +134,18 @@ if defined BROWSER (
   start "" "%URL%"
 )
 
-REM [5/4] remember window size: background watcher saves size while app window is open
-start "winsize-save" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.dsh-webui\dsh-ui-winsize.ps1" -Port %PORT%
+REM [5/4] background watcher: saves window size while open; once the app window
+REM is closed, stops the dsh web THIS launcher started (KILL_ON_CLOSE=1) and exits.
+start "winsize-save" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.dsh-webui\dsh-ui-winsize.ps1" -Port %PORT% -KillOnClose %KILL_ON_CLOSE%
 exit /b 0
 
 :fail
-echo [ERROR] dsh web not ready in 60s: %URL%
+REM final check: dsh web may have finished booting during the wait - open the window then
+powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:%PORT%' -TimeoutSec 2).StatusCode | Out-Null; exit 0 } catch { exit 1 }"
+if "!ERRORLEVEL!"=="0" goto open
+echo [ERROR] dsh web not ready in 120s: %URL%
+REM cleanup: stop the dsh web started by this launcher (the listener on PORT)
+powershell -NoProfile -Command "`$c = Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if (`$c) { Stop-Process -Id `$c.OwningProcess -Force -ErrorAction SilentlyContinue }"
 timeout /t 10 /nobreak >nul
 exit /b 1
 "@
@@ -146,7 +157,7 @@ Write-Host "[install] 已生成启动脚本: $launcher"
 # ---- 生成窗口尺寸探针（后台运行：保存 App 窗口尺寸，窗口关闭即退出）----
 $winsizePs1 = Join-Path $appDir 'dsh-ui-winsize.ps1'
 $winsizeContent = @'
-param([int]$Port = 3080)
+param([int]$Port = 3080, [int]$KillOnClose = 0)
 $ErrorActionPreference = 'SilentlyContinue'
 $src = @"
 using System;
@@ -159,24 +170,44 @@ public class W32 {
 "@
 Add-Type -TypeDefinition $src
 $sizeFile = Join-Path $env:USERPROFILE '.dsh-webui-browser\window-size'
+$seen = $false
 $missed = 0
+$bootTries = 0
 while ($true) {
   Start-Sleep -Seconds 3
   $procs = Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | Where-Object { $_.CommandLine -match ":$Port" }
-  if (-not $procs) {
-    $missed++
-    if ($missed -ge 4) { break }
+  if ($procs) {
+    # app window process present: remember size; reset close-detection counters
+    $seen = $true
+    $missed = 0
+    foreach ($w in (Get-Process msedge,chrome | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle })) {
+      $r = New-Object RECT
+      [W32]::GetWindowRect($w.MainWindowHandle, [ref]$r) | Out-Null
+      $wpx = $r.Right - $r.Left
+      $hpx = $r.Bottom - $r.Top
+      if ($wpx -gt 200 -and $hpx -gt 200 -and -not [W32]::IsIconic($w.MainWindowHandle)) {
+        Set-Content -Path $sizeFile -Value ($wpx.ToString() + ',' + $hpx.ToString()) -NoNewline
+        break
+      }
+    }
     continue
   }
-  $missed = 0
-  foreach ($w in (Get-Process msedge,chrome | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle })) {
-    $r = New-Object RECT
-    [W32]::GetWindowRect($w.MainWindowHandle, [ref]$r) | Out-Null
-    $wpx = $r.Right - $r.Left
-    $hpx = $r.Bottom - $r.Top
-    if ($wpx -gt 200 -and $hpx -gt 200 -and -not [W32]::IsIconic($w.MainWindowHandle)) {
-      Set-Content -Path $sizeFile -Value ($wpx.ToString() + ',' + $hpx.ToString()) -NoNewline
+  if (-not $seen) {
+    # window not opened yet (cold boot): wait up to 3 min, then exit WITHOUT
+    # killing the server (user may open the browser manually, like the WSL script)
+    $bootTries++
+    if ($bootTries -ge 60) { break }
+    continue
+  }
+  # window was seen and is now gone for ~12 seconds -> user closed the app window
+  $missed++
+  if ($missed -ge 4) {
+    if ($KillOnClose -eq 1) {
+      # stop the dsh web started by this launcher: the process listening on $Port
+      $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }
     }
+    break
   }
 }
 '@

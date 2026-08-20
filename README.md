@@ -14,6 +14,8 @@
 
 **无 cmd 窗口 + 窗口尺寸记忆（v1.4.0）**：Windows 快捷方式双击后 dsh web 以隐藏方式启动（不再闪现 cmd 窗口，日志写入 `%USERPROFILE%\.dsh-webui\dsh-web.log`）；App 窗口默认横向 `1280×800`，关闭后自动记忆调整过的尺寸，下次启动恢复。
 
+**关闭窗口自动停止服务（v1.4.1）**：WSL / Linux 脚本关闭浏览器窗口即停止 `dsh web`；Windows 启动器新增看护进程（`dsh-ui-winsize.ps1`），检测到 App 窗口关闭后停止**由本启动器拉起**的 `dsh web`（仅监听该端口的那个进程），不会误杀启动器外已运行的 `dsh web`（例如已手动启动/其它快捷方式启动的实例）。同时修正：启动失败（120 秒内未就绪）时清理本次拉起的 `dsh web`；`DSH_WEBUI_DATA_DIR` 可覆盖浏览器独立数据目录（默认 `%LOCALAPPDATA%\dsh-webui-browser`）。
+
 安装器输出强制 UTF-8，在 PowerShell / dsh 控制台里中文不再乱码。
 
 ---
@@ -47,11 +49,11 @@ dsh plugin --profile web update dsh-webui-installer
 
 Windows 快捷方式启动流程（`%USERPROFILE%\.dsh-webui\start-dsh-webui.cmd`）：
 
-1. 检查端口 `3080` 是否已在服务（已在运行则直接开浏览器，防重复启动）
-2. 未运行则**隐藏启动** **Windows 侧** `dsh web`（`start /b`，无 cmd 窗口，日志写 `%USERPROFILE%\.dsh-webui\dsh-web.log`）
-3. 等待 WebUI 就绪（最多 60 秒）
-4. 用 Windows 侧 Edge/Chrome 打开 `--app=http://127.0.0.1:3080` App 窗口（独立浏览器数据目录；默认横向 `1280×800`，按 `%USERPROFILE%\.dsh-webui-browser\window-size` 记忆上次尺寸）
-5. 后台尺寸探针（`dsh-ui-winsize.ps1`）在窗口开着时持续保存窗口尺寸，窗口关闭即退出
+1. 检查端口 `3080` 是否已在服务（已在运行则直接开浏览器，防重复启动；此时不会把已有服务当作本次启动的进程）
+2. 未运行则**隐藏启动** **Windows 侧** `dsh web`（`start /b`，无 cmd 窗口，日志写 `%USERPROFILE%\.dsh-webui\dsh-web.log`；并标记 `KILL_ON_CLOSE=1`）
+3. 等待 WebUI 就绪（最多约 2 分钟，冷启动较慢；超时前若就绪直接开窗口，超时则清理本次拉起的 dsh web）
+4. 用 Windows 侧 Edge/Chrome 打开 `--app=http://127.0.0.1:3080` App 窗口（独立浏览器数据目录，可用 `DSH_WEBUI_DATA_DIR` 覆盖；默认横向 `1280×800`，按 `%USERPROFILE%\.dsh-webui-browser\window-size` 记忆上次尺寸）
+5. 后台看护（`dsh-ui-winsize.ps1`）：窗口开着时持续保存窗口尺寸；检测到窗口关闭（约 12 秒）后，若 `KILL_ON_CLOSE=1` 则停止监听该端口的 dsh web 进程并退出，否则仅退出（不误伤已在运行的实例）
 
 快捷方式图标：优先采用桌面 `DeepSeek Harness.lnk`（Edge PWA）图标，缺失回退 `dsh-webui.ico`；无窗口运行（wscript+VBS）。
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-webui-installer",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
