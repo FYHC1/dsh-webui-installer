@@ -4,11 +4,15 @@
 
 **关键设计**：在 **Windows 原生** 的 DeepSeek Harness 上安装时，使用 **Windows 平台命令（PowerShell / cmd）** 创建快捷方式，快捷方式启动的是 **Windows 侧** 的 `dsh web`（如 nvm4w 安装的 `dsh.cmd`），**不经过 WSL、不运行 bash 脚本**。
 
-**按平台生成各自的快捷方式（v1.3.0）**：快捷方式以 `(win)` / `(wsl)` / `(linux)` 后缀命名区分，各启动**对应平台**的 `dsh web` 并弹出 App 窗口，**不生成 `.bat`**：
+**按平台生成各自的快捷方式（v1.4.0）**：快捷方式以 `(win)` / `(wsl)` / `(linux)` 后缀命名区分，各启动**对应平台**的 `dsh web` 并弹出 App 窗口，**不生成 `.bat`**：
 
 - Windows 端 → `DeepSeek Harness WebUI (win).lnk`（Windows 桌面）
 - WSL 端 → `DeepSeek Harness WebUI (wsl).lnk`（Windows 桌面，未启动 WSL 会自动启动发行版）+ 注册 `dsh-ui` 命令
 - Linux 端 → `DeepSeek Harness WebUI (linux).desktop`（Linux 桌面）+ 注册 `dsh-ui` 命令
+
+**图标**：安装时自动采用桌面 `DeepSeek Harness.lnk`（Edge PWA 安装的官方图标）的图标，缺失时回退随包 `dsh-webui.ico`。
+
+**无 cmd 窗口 + 窗口尺寸记忆（v1.4.0）**：Windows 快捷方式双击后 dsh web 以隐藏方式启动（不再闪现 cmd 窗口，日志写入 `%USERPROFILE%\.dsh-webui\dsh-web.log`）；App 窗口默认横向 `1280×800`，关闭后自动记忆调整过的尺寸，下次启动恢复。
 
 安装器输出强制 UTF-8，在 PowerShell / dsh 控制台里中文不再乱码。
 
@@ -44,13 +48,14 @@ dsh plugin --profile web update dsh-webui-installer
 Windows 快捷方式启动流程（`%USERPROFILE%\.dsh-webui\start-dsh-webui.cmd`）：
 
 1. 检查端口 `3080` 是否已在服务（已在运行则直接开浏览器，防重复启动）
-2. 未运行则启动 **Windows 侧** `dsh web`（隐藏窗口）
+2. 未运行则**隐藏启动** **Windows 侧** `dsh web`（`start /b`，无 cmd 窗口，日志写 `%USERPROFILE%\.dsh-webui\dsh-web.log`）
 3. 等待 WebUI 就绪（最多 60 秒）
-4. 用 Windows 侧 Edge/Chrome 打开 `--app=http://127.0.0.1:3080` App 窗口（独立浏览器数据目录）
+4. 用 Windows 侧 Edge/Chrome 打开 `--app=http://127.0.0.1:3080` App 窗口（独立浏览器数据目录；默认横向 `1280×800`，按 `%USERPROFILE%\.dsh-webui-browser\window-size` 记忆上次尺寸）
+5. 后台尺寸探针（`dsh-ui-winsize.ps1`）在窗口开着时持续保存窗口尺寸，窗口关闭即退出
 
-快捷方式图标使用 **DeepSeek Harness 图标**（`dsh-webui.ico`，随包附带，由 `dsh-webui.svg` 生成），无窗口运行（wscript+VBS）。
+快捷方式图标：优先采用桌面 `DeepSeek Harness.lnk`（Edge PWA）图标，缺失回退 `dsh-webui.ico`；无窗口运行（wscript+VBS）。
 
-环境变量：`DSH_WEB_PORT`（默认 `3080`）可在 `start-dsh-webui.cmd` 外设置以改端口。
+环境变量：`DSH_WEB_PORT`（默认 `3080`）可在 `start-dsh-webui.cmd` 外设置以改端口（启动时传给 `dsh web --port`，`dsh web` 自身不读该环境变量）。
 
 ## 三、卸载
 

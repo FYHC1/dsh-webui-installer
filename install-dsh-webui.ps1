@@ -82,57 +82,106 @@ $launcherContent = @"
 setlocal EnableDelayedExpansion
 REM ============================================
 REM DeepSeek Harness WebUI launcher (Windows native)
-REM Starts Windows-side DeepSeek Harness (dsh web),
-REM waits for readiness, then opens Edge/Chrome app window.
+REM Starts Windows-side DeepSeek Harness (dsh web)
+REM with NO console window (hidden), waits for
+REM readiness, opens Edge/Chrome app window with
+REM remembered size (landscape 1280x800 default).
 REM ============================================
 set "DSH=$dshPath"
 set "PORT=3080"
 if defined DSH_WEB_PORT set "PORT=%DSH_WEB_PORT%"
 set "URL=http://127.0.0.1:%PORT%"
 set "DATA_DIR=%LOCALAPPDATA%\dsh-webui-browser"
+set "LOG=%USERPROFILE%\.dsh-webui\dsh-web.log"
+set "SIZE_FILE=%USERPROFILE%\.dsh-webui-browser\window-size"
 
 REM [1/4] already serving? open browser directly
 powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:%PORT%' -TimeoutSec 2).StatusCode | Out-Null; exit 0 } catch { exit 1 }"
 if "!ERRORLEVEL!"=="0" goto open
 
-REM [2/4] start Windows-side dsh web (hidden window)
+REM [2/4] start Windows-side dsh web hidden (no console window), log to file
 echo [2/4] starting dsh web (Windows) on port %PORT% ...
-start "dsh web" /min cmd /c ""%DSH%" web"
+start "dsh web" /b cmd /c ""%DSH%" web --port %PORT%" >"%LOG%" 2>&1
 
-REM [3/4] wait for WebUI ready (max 60s)
+REM [3/4] wait for WebUI ready (cold boot can take ~2 min)
 set /a tries=0
 :wait
 powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:%PORT%' -TimeoutSec 2).StatusCode | Out-Null; exit 0 } catch { exit 1 }"
 if "!ERRORLEVEL!"=="0" goto open
 set /a tries+=1
-if !tries! GEQ 60 goto fail
+if !tries! GEQ 120 goto fail
 timeout /t 1 /nobreak >nul
 goto wait
 
 :open
-REM [4/4] open app window with Windows-side Edge/Chrome
+REM [4/4] open app window (remembered size, landscape default) with Windows-side Edge/Chrome
+set "WIN_SIZE=1280,800"
+if exist "%SIZE_FILE%" set /p WIN_SIZE=<"%SIZE_FILE%"
 set "BROWSER="
 if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" set "BROWSER=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
 if not defined BROWSER if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" set "BROWSER=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
 if not defined BROWSER if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set "BROWSER=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
 if not defined BROWSER if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set "BROWSER=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
-set "ARGS=--app=%URL% --user-data-dir=%DATA_DIR% --no-first-run --no-default-browser-check --disable-extensions --disable-notifications --disable-component-update --disable-background-networking"
+set "ARGS=--app=%URL% --user-data-dir=%DATA_DIR% --window-size=%WIN_SIZE% --no-first-run --no-default-browser-check --disable-extensions --disable-notifications --disable-component-update --disable-background-networking"
 if defined BROWSER (
   start "" "%BROWSER%" %ARGS%
 ) else (
   start "" "%URL%"
 )
+
+REM [5/4] remember window size: background watcher saves size while app window is open
+start "winsize-save" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.dsh-webui\dsh-ui-winsize.ps1" -Port %PORT%
 exit /b 0
 
 :fail
 echo [ERROR] dsh web not ready in 60s: %URL%
-pause
+timeout /t 10 /nobreak >nul
 exit /b 1
 "@
 # 写成 CRLF（cmd 兼容）
 $launcherContent = $launcherContent -replace "`r?`n", "`r`n"
 [System.IO.File]::WriteAllText($launcher, $launcherContent, [System.Text.Encoding]::ASCII)
 Write-Host "[install] 已生成启动脚本: $launcher"
+
+# ---- 生成窗口尺寸探针（后台运行：保存 App 窗口尺寸，窗口关闭即退出）----
+$winsizePs1 = Join-Path $appDir 'dsh-ui-winsize.ps1'
+$winsizeContent = @'
+param([int]$Port = 3080)
+$ErrorActionPreference = 'SilentlyContinue'
+$src = @"
+using System;
+using System.Runtime.InteropServices;
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+public class W32 {
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+}
+"@
+Add-Type -TypeDefinition $src
+$sizeFile = Join-Path $env:USERPROFILE '.dsh-webui-browser\window-size'
+$missed = 0
+while ($true) {
+  Start-Sleep -Seconds 3
+  $procs = Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | Where-Object { $_.CommandLine -match ":$Port" }
+  if (-not $procs) {
+    $missed++
+    if ($missed -ge 4) { break }
+    continue
+  }
+  $missed = 0
+  foreach ($w in (Get-Process msedge,chrome | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle })) {
+    $r = New-Object RECT
+    [W32]::GetWindowRect($w.MainWindowHandle, [ref]$r) | Out-Null
+    $wpx = $r.Right - $r.Left
+    $hpx = $r.Bottom - $r.Top
+    if ($wpx -gt 200 -and $hpx -gt 200 -and -not [W32]::IsIconic($w.MainWindowHandle)) {
+      Set-Content -Path $sizeFile -Value ($wpx.ToString() + ',' + $hpx.ToString()) -NoNewline
+    }
+  }
+}
+'@
+[System.IO.File]::WriteAllText($winsizePs1, $winsizeContent, [System.Text.Encoding]::ASCII)
+Write-Host "[install] 已生成窗口尺寸探针: $winsizePs1"
 
 # ---- 生成无窗口 VBS 包装（供 .lnk 使用）----
 $vbs = Join-Path $appDir 'start-dsh-webui.vbs'
@@ -153,10 +202,20 @@ $lnk.TargetPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
 $lnk.Arguments = "`"$vbs`""
 $lnk.WorkingDirectory = $env:USERPROFILE
 $lnk.Description = 'DeepSeek Harness WebUI (Windows dsh web, win)'
-# 优先用 DeepSeek Harness 图标（dsh-webui.ico，随包附带）；缺失时回退 Edge/系统图标
+# 图标优先级：桌面 DeepSeek Harness.lnk 的图标（Edge PWA 官方图标）> 随包 dsh-webui.ico > Edge/系统图标
 $icoSource = Join-Path $PSScriptRoot 'dsh-webui.ico'
 $icoDest = Join-Path $appDir 'dsh-webui.ico'
-if (Test-Path $icoSource) {
+$pwaIcon = ''
+$pwaLnk = "$desktop\DeepSeek Harness.lnk"
+if (Test-Path $pwaLnk) {
+  $pwaShell = New-Object -ComObject WScript.Shell
+  $pwa = $pwaShell.CreateShortcut($pwaLnk)
+  $pwaIcon = [string]$pwa.IconLocation
+}
+if ($pwaIcon) {
+  $lnk.IconLocation = $pwaIcon
+  Write-Host "[install] 已采用 DeepSeek Harness.lnk 的图标: $pwaIcon"
+} elseif (Test-Path $icoSource) {
   Copy-Item -Force $icoSource $icoDest
   $lnk.IconLocation = "$icoDest,0"
   Write-Host "[install] 图标已复制: $icoDest"
@@ -171,5 +230,5 @@ $lnk.Save()
 Write-Host "[install] 已生成快捷方式: $lnkPath"
 
 Write-Host ''
-Write-Host '[install] 完成。双击桌面"DeepSeek Harness WebUI (win)"快捷方式即可启动 Windows 侧 dsh web。'
+Write-Host '[install] 完成。双击桌面"DeepSeek Harness WebUI (win)"快捷方式即可启动 Windows 侧 dsh web（无 cmd 窗口，窗口尺寸自动记忆）。'
 Write-Host '[install] 提示：若同时运行 WSL 侧 dsh web（占用同端口），请先停止其一，或设置 DSH_WEB_PORT 改端口。'

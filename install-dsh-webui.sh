@@ -178,7 +178,15 @@ EOF
 \$lnk.Arguments = '__VBS_WIN__'
 \$lnk.WorkingDirectory = \$env:USERPROFILE
 \$lnk.Description = 'DeepSeek Harness WebUI (WSL dsh web, wsl)'
-\$lnk.IconLocation = '__ICO_WIN__'
+# 图标优先级：桌面 DeepSeek Harness.lnk 的图标（Edge PWA）> 随包 dsh-webui.ico
+\$icon = ''
+\$pwa = Join-Path \$desktop 'DeepSeek Harness.lnk'
+if (Test-Path \$pwa) {
+  \$pl = \$ws.CreateShortcut(\$pwa)
+  if (\$pl.IconLocation) { \$icon = \$pl.IconLocation }
+}
+if (-not \$icon) { \$icon = '__ICO_WIN__' }
+\$lnk.IconLocation = \$icon
 \$lnk.Save()
 PS_EOF
   sed -i "s|__VBS_WIN__|C:/Users/$user/.dsh-webui-browser/start-dsh-webui.wsl.vbs|; s|__ICO_WIN__|C:/Users/$user/.dsh-webui-browser/dsh-webui.ico|" "$ps1_file"
