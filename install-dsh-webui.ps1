@@ -8,12 +8,17 @@
 #    powershell -NoProfile -ExecutionPolicy Bypass -File install-dsh-webui.ps1
 #    powershell -NoProfile -ExecutionPolicy Bypass -File install-dsh-webui.ps1 -Uninstall
 #
-#  生成产物（均位于 Windows 桌面）:
-#    DeepSeek Harness WebUI.lnk   无窗口快捷方式（WScript + VBS，启动 Windows dsh web）
-#    DeepSeek Harness WebUI.bat   带控制台的启动脚本（等价改调用 bat）
+#  生成产物:
+#    桌面 DeepSeek Harness WebUI.lnk  无窗口快捷方式（WScript + VBS，启动 Windows dsh web）
+#    %USERPROFILE%\.dsh-webui\        启动脚本 / VBS / 图标
+#  统一策略：无论是 Windows 端还是 WSL 端安装，都只在 Windows 桌面生成
+#  这一个快捷方式，不再生成 .bat。
 # ============================================================
 param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
+
+# 输出 UTF-8：被 dsh 捕获/重定向时避免按 OEM 代码页（如 GBK）输出导致乱码
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # ---- 探测 Windows 桌面路径 ----
 $desktop = [Environment]::GetFolderPath('Desktop')
@@ -53,6 +58,13 @@ if ($Uninstall) {
 
 $dshPath = Get-DshPath
 Write-Host "[install] 检测到 Windows dsh: $dshPath"
+
+# 清理旧版遗留：新策略不再生成 .bat，若桌面上还有旧版 .bat 一并移除
+$legacyBat = "$desktop\DeepSeek Harness WebUI.bat"
+if (Test-Path $legacyBat) {
+  Remove-Item -Force $legacyBat
+  Write-Host "[install] 已清理旧版 .bat: $legacyBat"
+}
 
 # ---- 准备安装目录 ----
 $appDir = Join-Path $env:USERPROFILE '.dsh-webui'
@@ -152,12 +164,6 @@ if (Test-Path $icoSource) {
 }
 $lnk.Save()
 Write-Host "[install] 已生成快捷方式: $lnkPath"
-
-# ---- 生成 .bat（带控制台版本）----
-$batPath = "$desktop\DeepSeek Harness WebUI.bat"
-$batContent = "@echo off`r`ncall `"$launcher`"`r`nif errorlevel 1 pause`r`n"
-[System.IO.File]::WriteAllText($batPath, $batContent, [System.Text.Encoding]::ASCII)
-Write-Host "[install] 已生成: $batPath"
 
 Write-Host ''
 Write-Host '[install] 完成。双击桌面"DeepSeek Harness WebUI"快捷方式即可启动 Windows 侧 dsh web。'

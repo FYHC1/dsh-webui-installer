@@ -4,6 +4,8 @@
 
 **关键设计**：在 **Windows 原生** 的 DeepSeek Harness 上安装时，使用 **Windows 平台命令（PowerShell / cmd）** 创建快捷方式，快捷方式启动的是 **Windows 侧** 的 `dsh web`（如 nvm4w 安装的 `dsh.cmd`），**不经过 WSL、不运行 bash 脚本**。
 
+**统一策略（v1.2.0）**：无论是 **Windows 端**还是 **WSL 端**安装，都**只在 Windows 桌面**生成一个快捷方式 `DeepSeek Harness WebUI.lnk`（启动 Windows 侧 `dsh web`，DeepSeek Harness 图标），**不再生成 `.bat`**，也不再生成 Linux 桌面入口。WSL 端是把 PowerShell 安装器委托给 `powershell.exe` 执行，与 Windows 端完全一致。安装器输出强制 UTF-8，在 PowerShell / dsh 控制台里中文不再乱码。
+
 ---
 
 ## 一、安装到任意 profile
@@ -27,8 +29,10 @@ dsh plugin --profile web update dsh-webui-installer
 
 | 平台 | 安装器 | 创建内容 | 快捷方式启动的目标 |
 |---|---|---|---|
-| **Windows（win32）** | `install-dsh-webui.ps1`（PowerShell） | 桌面 `DeepSeek Harness WebUI.lnk`（无窗口，wscript+VBS）+ `.bat` | **Windows 侧** `dsh web`（自动探测 nvm4w 的 `dsh.cmd`） |
-| **Linux / WSL** | `install-dsh-webui.sh`（bash） | WSL 脚本、`dsh-ui` 命令、Linux 桌面快捷方式、Windows 桌面 .bat/.lnk（经 WSL） | WSL 侧 `dsh web` |
+| **Windows（win32）** | `install-dsh-webui.ps1`（PowerShell 原生） | 桌面 `DeepSeek Harness WebUI.lnk`（无窗口，wscript+VBS）+ `%USERPROFILE%\.dsh-webui\` 目录 | **Windows 侧** `dsh web`（自动探测 nvm4w 的 `dsh.cmd`） |
+| **Linux / WSL** | `install-dsh-webui.sh`（bash，委托 PowerShell 安装器） | 与 Windows 端**完全相同**：只在 Windows 桌面生成同一个 `.lnk` | **Windows 侧** `dsh web` |
+
+两端产物完全一致：**只生成桌面 `DeepSeek Harness WebUI.lnk`，不再生成任何 `.bat`**，也没有 Linux 桌面入口 / `dsh-ui` 命令（旧版遗留产物在安装与卸载时都会自动清理）。
 
 Windows 快捷方式启动流程（`%USERPROFILE%\.dsh-webui\start-dsh-webui.cmd`）：
 
@@ -47,7 +51,7 @@ Windows 快捷方式启动流程（`%USERPROFILE%\.dsh-webui\start-dsh-webui.cmd
 dsh plugin --profile web remove dsh-webui-installer   # 或手动运行安装器 --Uninstall / --uninstall
 ```
 
-Windows 卸载器同时删除桌面 `.lnk` / `.bat` 与 `%USERPROFILE%\.dsh-webui` 目录（幂等）。
+Windows 卸载器同时删除桌面 `.lnk` 与 `%USERPROFILE%\.dsh-webui` 目录，并顺带清理旧版遗留的桌面 `.bat` / Linux 入口（幂等）。
 
 ## 四、包结构
 
@@ -57,18 +61,18 @@ dsh-webui-installer
 ├── cordis.patch.yml          # insert 一行 name: dsh-webui-installer
 ├── lib/index.js              # apply() 自动安装（已存在则跳过）+ 注册工具
 ├── install-dsh-webui.ps1     # Windows 原生安装器（PowerShell/cmd，启动 Windows 侧 dsh web）
-├── install-dsh-webui.sh      # WSL/Linux 安装器（bash）
-├── start-dsh-webui.sh        # WSL 主脚本
-├── start-dsh-webui.bat       # WSL 一键启动（Windows .bat）
-├── start-dsh-webui-linux.sh  # 原生 Linux 版
+├── install-dsh-webui.sh      # WSL 端安装器（bash，委托 PowerShell 安装器）
+├── start-dsh-webui.sh        # 独立 WSL 启动脚本（不再由安装器安装，保留直接使用）
+├── start-dsh-webui.bat       # 独立 Windows 一键启动（保留直接使用，桌面不再生成）
+├── start-dsh-webui-linux.sh  # 原生 Linux 版（保留直接使用）
 ├── dsh-webui.svg             # 应用图标源文件
 └── dsh-webui.ico             # Windows 快捷方式图标（由 SVG 生成）
 ```
 
 `lib/index.js` 的 `apply()` 在插件加载时按 `process.platform` 分支：
 
-- **先检测是否已安装**：Windows 检查桌面 `DeepSeek Harness WebUI.lnk`，Linux/WSL 检查 `dsh-ui`/`.desktop`，已存在则跳过
+- **先检测是否已安装**：两端统一检查 Windows 桌面 `DeepSeek Harness WebUI.lnk`（WSL 端经 `powershell.exe` 探测），已存在则跳过
 - `win32` → 运行 `install-dsh-webui.ps1`（纯 Windows 命令）
-- 其他 → 运行 `install-dsh-webui.sh`（bash）
+- WSL → 运行 `install-dsh-webui.sh`（bash），脚本内把 `.ps1` 委托给 `powershell.exe` 执行
 
 同时注册 `dsh-ui-install`（强制重装）/ `dsh-ui-uninstall` 两个工具供 agent 手动调用。
