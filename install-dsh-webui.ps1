@@ -136,8 +136,14 @@ $lnk.TargetPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
 $lnk.Arguments = "`"$vbs`""
 $lnk.WorkingDirectory = $env:USERPROFILE
 $lnk.Description = 'DeepSeek Harness WebUI (Windows dsh web)'
-# 优先用 Edge 图标，其次系统图标
-if (Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe") {
+# 优先用 DeepSeek Harness 图标（dsh-webui.ico，随包附带）；缺失时回退 Edge/系统图标
+$icoSource = Join-Path $PSScriptRoot 'dsh-webui.ico'
+$icoDest = Join-Path $appDir 'dsh-webui.ico'
+if (Test-Path $icoSource) {
+  Copy-Item -Force $icoSource $icoDest
+  $lnk.IconLocation = "$icoDest,0"
+  Write-Host "[install] 图标已复制: $icoDest"
+} elseif (Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe") {
   $lnk.IconLocation = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe,0"
 } elseif (Test-Path "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") {
   $lnk.IconLocation = "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe,0"
