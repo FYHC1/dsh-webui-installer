@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# 确保 WSL interop 已注册（systemd=true 时可能缺失）
+if [ -f /proc/version ] && grep -qi microsoft /proc/version && [ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ] 2>/dev/null; then
+  echo ':WSLInterop:M::MZ::/init:PF' | sudo -n tee /proc/sys/fs/binfmt_misc/register >/dev/null 2>&1 || true
+fi
 # ============================================================
 #  DeepSeek Harness WebUI 安装器（自包含、幂等、可卸载）
 #
