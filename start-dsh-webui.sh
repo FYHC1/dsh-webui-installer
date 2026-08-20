@@ -216,6 +216,12 @@ PSEOF
     DSH_PID=""   # 浏览器没开起来就不停服务，方便手动打开
   else
     echo "WebUI 已打开，关闭该窗口后自动停止服务 ..."
+    # 常驻图标看护（关窗后自动退出）：加载官方图标并设置到 App 窗口（与桌面快捷方式同款）。
+    # 图标句柄由常驻进程持有，窗口关闭进程退出后自动释放，不会残留失效句柄。
+    # KillOnClose=0：停止 WSL 侧服务由本脚本的 trap 负责，这里不重复杀。
+    if [ -n "$WIN_PS1_WIN" ]; then
+      powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$WIN_PS1_WIN','-Port','$PORT','-KillOnClose','0','-ApplyIcon','1' -WindowStyle Hidden" >/dev/null 2>&1 || true
+    fi
     while [ "$(ps_count)" -ge 1 ]; do sleep 5; done
   fi
 else

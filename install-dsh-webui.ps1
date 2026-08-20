@@ -136,7 +136,7 @@ if defined BROWSER (
 
 REM [5/4] background watcher: saves window size while open; once the app window
 REM is closed, stops the dsh web THIS launcher started (KILL_ON_CLOSE=1) and exits.
-start "winsize-save" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.dsh-webui\dsh-ui-winsize.ps1" -Port %PORT% -KillOnClose %KILL_ON_CLOSE%
+start "winsize-save" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.dsh-webui\dsh-ui-winsize.ps1" -Port %PORT% -KillOnClose %KILL_ON_CLOSE% -ApplyIcon 1
 exit /b 0
 
 :fail
@@ -157,7 +157,7 @@ Write-Host "[install] 已生成启动脚本: $launcher"
 # ---- 生成窗口尺寸探针（后台运行：保存 App 窗口尺寸，窗口关闭即退出）----
 $winsizePs1 = Join-Path $appDir 'dsh-ui-winsize.ps1'
 $winsizeContent = @'
-param([int]$Port = 3080, [int]$KillOnClose = 0)
+param([int]$Port = 3080, [int]$KillOnClose = 0, [int]$ApplyIcon = 0)
 $ErrorActionPreference = 'SilentlyContinue'
 $src = @"
 using System;
@@ -166,6 +166,8 @@ public struct RECT { public int Left; public int Top; public int Right; public i
 public class W32 {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr LoadImageW(IntPtr hinst, string lpszName, uint type, int cx, int cy, uint fuLoad);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 }
 "@
 Add-Type -TypeDefinition $src
@@ -173,6 +175,9 @@ $sizeFile = Join-Path $env:USERPROFILE '.dsh-webui-browser\window-size'
 $seen = $false
 $missed = 0
 $bootTries = 0
+$iconPath = Join-Path $env:USERPROFILE '.dsh-webui\dsh-webui.ico'
+$appIcon = [IntPtr]::Zero
+$appIconSmall = [IntPtr]::Zero
 while ($true) {
   Start-Sleep -Seconds 3
   $procs = Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | Where-Object { $_.CommandLine -match ":$Port" }
@@ -180,7 +185,22 @@ while ($true) {
     # app window process present: remember size; reset close-detection counters
     $seen = $true
     $missed = 0
-    foreach ($w in (Get-Process msedge,chrome | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle })) {
+    # only touch app-window processes matching this launcher's port (do not
+    # touch unrelated Edge windows the user may have open)
+    $wprocs = foreach ($proc in $procs) { Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue }
+    foreach ($w in $wprocs) {
+      if (-not $w -or $w.MainWindowHandle -eq 0 -or -not $w.MainWindowTitle) { continue }
+      # apply the DeepSeek Harness icon to the app window (taskbar icon = the same icon as the desktop shortcut).
+      # Only when -ApplyIcon 1 (long-running watcher): the loaded icon handle must stay alive as long as the
+      # window is open, or the taskbar icon would become stale when the owner process exits.
+      if ($ApplyIcon -eq 1) {
+        $appIcon = [W32]::LoadImageW([IntPtr]::Zero, $iconPath, 1, 32, 32, 0x10)
+        $appIconSmall = [W32]::LoadImageW([IntPtr]::Zero, $iconPath, 1, 16, 16, 0x10)
+      }
+      if ($appIcon -ne [IntPtr]::Zero) {
+        [void][W32]::SendMessageW($w.MainWindowHandle, 0x80, [IntPtr]1, $appIcon)
+        [void][W32]::SendMessageW($w.MainWindowHandle, 0x80, [IntPtr]0, $appIconSmall)
+      }
       $r = New-Object RECT
       [W32]::GetWindowRect($w.MainWindowHandle, [ref]$r) | Out-Null
       $wpx = $r.Right - $r.Left
@@ -259,6 +279,17 @@ if ($pwaIcon) {
 }
 $lnk.Save()
 Write-Host "[install] 已生成快捷方式: $lnkPath"
+
+# ---- 物化官方图标（看护进程用它设置 App 窗口/任务栏图标，与桌面快捷方式同款）----
+$icoSrcFile = ''
+if ($pwaIcon -and $pwaIcon.Contains(',')) { $icoSrcFile = ($pwaIcon -split ',')[0] }
+if ($icoSrcFile -and (Test-Path -LiteralPath $icoSrcFile)) {
+  Copy-Item -Force -LiteralPath $icoSrcFile -Destination $icoDest
+  Write-Host "[install] 已物化官方图标(来自 Edge PWA): $icoDest"
+} elseif (Test-Path $icoSource) {
+  Copy-Item -Force $icoSource $icoDest
+  Write-Host "[install] 已物化随包兜底图标: $icoDest"
+}
 
 Write-Host ''
 Write-Host '[install] 完成。双击桌面"DeepSeek Harness WebUI (win)"快捷方式即可启动 Windows 侧 dsh web（无 cmd 窗口，窗口尺寸自动记忆）。'

@@ -10,7 +10,9 @@
 - WSL 端 → `DeepSeek Harness WebUI (wsl).lnk`（Windows 桌面，未启动 WSL 会自动启动发行版）+ 注册 `dsh-ui` 命令
 - Linux 端 → `DeepSeek Harness WebUI (linux).desktop`（Linux 桌面）+ 注册 `dsh-ui` 命令
 
-**图标**：安装时自动采用桌面 `DeepSeek Harness.lnk`（Edge PWA 安装的官方图标）的图标，缺失时回退随包 `dsh-webui.ico`。
+**图标**：安装时自动采用桌面 `DeepSeek Harness.lnk`（Edge PWA 安装的官方图标）的图标，缺失时回退随包 `dsh-webui.ico`；并把图标物化一份到 `%USERPROFILE%\.dsh-webui\dsh-webui.ico`，供看护进程设置 App 窗口/任务栏图标（v1.4.2）。
+
+**任务栏图标与快捷方式同款（v1.4.2）**：`dsh web` 页面只提供 SVG favicon，Chromium 的 `--app` 窗口拿不到位图图标，任务栏会显示 Edge 默认图标。看护进程（`dsh-ui-winsize.ps1`）会在 App 窗口出现后把官方图标（`%USERPROFILE%\.dsh-webui\dsh-webui.ico`）以 `WM_SETICON` 设置到窗口（32px 大图标 + 16px 小图标），并每 3 秒重新应用一次以覆盖 Edge 自身的图标切换，任务栏/窗口图标与桌面快捷方式保持一致。
 
 **无 cmd 窗口 + 窗口尺寸记忆（v1.4.0）**：Windows 快捷方式双击后 dsh web 以隐藏方式启动（不再闪现 cmd 窗口，日志写入 `%USERPROFILE%\.dsh-webui\dsh-web.log`）；App 窗口默认横向 `1280×800`，关闭后自动记忆调整过的尺寸，下次启动恢复。
 
@@ -80,7 +82,7 @@ dsh-webui-installer
 ├── start-dsh-webui.bat       # 独立 Windows 一键启动（保留直接使用，桌面不再生成）
 ├── start-dsh-webui-linux.sh  # 原生 Linux 脚本（随 linux 模式安装；也可独立运行）
 ├── dsh-webui.svg             # Linux 应用图标源文件
-└── dsh-webui.ico             # Windows 快捷方式图标（由 SVG 生成）
+└── dsh-webui.ico             # Windows 快捷方式图标（由 SVG 生成；安装时物化到 %USERPROFILE%\.dsh-webui\ 供看护进程设置窗口/任务栏图标）
 ```
 
 `lib/index.js` 的 `apply()` 在插件加载时按运行平台分支，并**先检测本平台快捷方式是否已存在**：Windows 检查桌面 `(win).lnk`、WSL 经 `powershell.exe` 探测桌面 `(wsl).lnk`、Linux 检查 `.local/share/applications/dsh-webui-linux.desktop`，已存在则跳过：
