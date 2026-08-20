@@ -9,10 +9,10 @@
 #    powershell -NoProfile -ExecutionPolicy Bypass -File install-dsh-webui.ps1 -Uninstall
 #
 #  生成产物:
-#    桌面 DeepSeek Harness WebUI.lnk  无窗口快捷方式（WScript + VBS，启动 Windows dsh web）
-#    %USERPROFILE%\.dsh-webui\        启动脚本 / VBS / 图标
-#  统一策略：无论是 Windows 端还是 WSL 端安装，都只在 Windows 桌面生成
-#  这一个快捷方式，不再生成 .bat。
+#    桌面 DeepSeek Harness WebUI (win).lnk  无窗口快捷方式（WScript + VBS，启动 Windows dsh web）
+#    %USERPROFILE%\.dsh-webui\              启动脚本 / VBS / 图标
+#  平台区分：快捷方式带 (win) 后缀，与 WSL 端生成的 (wsl) 快捷方式区分；
+#  只生成这一个 .lnk，不再生成 .bat。
 # ============================================================
 param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
@@ -47,7 +47,11 @@ function Get-DshPath {
 # ---- 卸载 ----
 if ($Uninstall) {
   Write-Host '[uninstall] 正在移除 Windows 桌面快捷方式 ...'
-  foreach ($f in @("$desktop\DeepSeek Harness WebUI.lnk", "$desktop\DeepSeek Harness WebUI.bat")) {
+  foreach ($f in @(
+    "$desktop\DeepSeek Harness WebUI (win).lnk",
+    "$desktop\DeepSeek Harness WebUI.lnk",   # 旧版无后缀遗留
+    "$desktop\DeepSeek Harness WebUI.bat"    # 旧版遗留
+  )) {
     if (Test-Path $f) { Remove-Item -Force $f; Write-Host "  已删除: $f" }
   }
   $appDir = Join-Path $env:USERPROFILE '.dsh-webui'
@@ -59,11 +63,12 @@ if ($Uninstall) {
 $dshPath = Get-DshPath
 Write-Host "[install] 检测到 Windows dsh: $dshPath"
 
-# 清理旧版遗留：新策略不再生成 .bat，若桌面上还有旧版 .bat 一并移除
-$legacyBat = "$desktop\DeepSeek Harness WebUI.bat"
-if (Test-Path $legacyBat) {
-  Remove-Item -Force $legacyBat
-  Write-Host "[install] 已清理旧版 .bat: $legacyBat"
+# 清理旧版遗留：旧版无后缀快捷方式与 .bat（新版本以 (win) 后缀命名，且不再生成 .bat）
+foreach ($legacy in @("$desktop\DeepSeek Harness WebUI.lnk", "$desktop\DeepSeek Harness WebUI.bat")) {
+  if (Test-Path $legacy) {
+    Remove-Item -Force $legacy
+    Write-Host "[install] 已清理旧版产物: $legacy"
+  }
 }
 
 # ---- 准备安装目录 ----
@@ -141,13 +146,13 @@ $vbsContent = $vbsContent -replace "`r?`n", "`r`n"
 Write-Host "[install] 已生成 VBS: $vbs"
 
 # ---- 生成 .lnk 快捷方式（无窗口）----
-$lnkPath = "$desktop\DeepSeek Harness WebUI.lnk"
+$lnkPath = "$desktop\DeepSeek Harness WebUI (win).lnk"
 $ws = New-Object -ComObject WScript.Shell
 $lnk = $ws.CreateShortcut($lnkPath)
 $lnk.TargetPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
 $lnk.Arguments = "`"$vbs`""
 $lnk.WorkingDirectory = $env:USERPROFILE
-$lnk.Description = 'DeepSeek Harness WebUI (Windows dsh web)'
+$lnk.Description = 'DeepSeek Harness WebUI (Windows dsh web, win)'
 # 优先用 DeepSeek Harness 图标（dsh-webui.ico，随包附带）；缺失时回退 Edge/系统图标
 $icoSource = Join-Path $PSScriptRoot 'dsh-webui.ico'
 $icoDest = Join-Path $appDir 'dsh-webui.ico'
@@ -166,5 +171,5 @@ $lnk.Save()
 Write-Host "[install] 已生成快捷方式: $lnkPath"
 
 Write-Host ''
-Write-Host '[install] 完成。双击桌面"DeepSeek Harness WebUI"快捷方式即可启动 Windows 侧 dsh web。'
+Write-Host '[install] 完成。双击桌面"DeepSeek Harness WebUI (win)"快捷方式即可启动 Windows 侧 dsh web。'
 Write-Host '[install] 提示：若同时运行 WSL 侧 dsh web（占用同端口），请先停止其一，或设置 DSH_WEB_PORT 改端口。'
